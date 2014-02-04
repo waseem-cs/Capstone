@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <sys/timeb.h>
+#include <omp.h>
 
 void calc_newx(int, int, int, int, int *, int *, int *, int *, int *, double *, double *, double *);
 void init_x(int, double *);
@@ -15,18 +16,20 @@ int main(int argc, char *argv[]) {
 	int *diag, *l_upper, *l_lower, *u_upper, *u_lower;
 	double *x, *newx, *b, *true_x;
 	double residual = 10000;
-	struct timeb start, stop;
-	int time_diff;
+	double begin, end;
+	int threads;
 	
-	if (argc != 2) {
-		printf("Format: jacobi <n>\n");
+	if (argc != 3) {
+		printf("Format: jacobi <n> <num_threads>\n");
 		return 1;
 	}
 	
 	n = atoi(argv[1]);
+	threads = atoi(argv[2]);
+	omp_set_num_threads(threads);
 	
 	//start timing here
-	ftime(&start);
+	begin = omp_get_wtime();
 	
 	gen_laplace_mat(n, &diag, &l_upper, &l_lower, &u_upper, &u_lower);
 	
@@ -45,19 +48,20 @@ int main(int argc, char *argv[]) {
 	
 	while (residual > 0.001 && execs < 100000) {
 		calc_newx(n, diag_size, mid_size, short_size, diag, l_upper, l_lower, u_upper, u_lower, x, b, newx);
+		
+#pragma omp parallel for
 		for (i = 0; i < diag_size; i++) {
 			x[i] = newx[i];
 		}
+		
 		residual = calc_resid(n, diag_size, mid_size, short_size, diag, l_upper, l_lower, u_upper, u_lower, x, b);
 		execs++;
 	}
 	
 	// end timing here
-	ftime(&stop);
-	
-	time_diff = (int)(1000.0 * (stop.time - start.time) + (stop.millitm - start.millitm));
-	
-	printf("Finished in %u milliseconds.\n", time_diff);
+	end = omp_get_wtime();
+		
+	printf("Finished in %2e seconds.\n", end - begin);
 	
 	printf("In %d iterations, got residual of %f\n", execs, residual);
 	
@@ -70,7 +74,8 @@ void calc_newx(int n, int diag_size, int mid_size, int short_size,
 			  int *diag, int *l_upper, int *l_lower, int *u_upper, int *u_lower,
 			  double *x, double *b, double *newx) {
 	int i;
-				  
+			
+#pragma omp parallel for	  
 	for (i = 0; i < diag_size; i++) {
 		/*if (i < short_size)
 			uu = u_upper[i] * x[i + n];
@@ -108,6 +113,7 @@ void calc_newx(int n, int diag_size, int mid_size, int short_size,
 // O(N) algorithm
 void init_x(int size, double *x) {
 	int i;
+#pragma omp parallel for
 	for (i = 0; i < size; i++) {
 		// create x0 = [2, -2, 2, -2, ...]
 		x[i] = (i % 2) == 0 ? 2 : -2;
@@ -120,6 +126,7 @@ void init_x(int size, double *x) {
 // O(N) algorithm
 void init_true_x(int size, double *true_x) {
 	int i;
+#pragma omp parallel for
 	for (i = 0; i < size; i++) {
 		// create true x = [1, 1, 1, 1, ...]
 		true_x[i] = 1;
@@ -134,6 +141,7 @@ void init_b(int n, int diag_size, int mid_size, int short_size,
 			int *diag, int *l_upper, int *l_lower, int *u_upper, int *u_lower,
 			double *true_x, double *b) {
     int i;
+#pragma omp parallel for
 	for (i = 0; i < diag_size; i++) {
 		// get b by multiplying Ax, or (U + L + D)x
 		b[i] = ((i < short_size ? u_upper[i] * true_x[i + n] : 0) +
@@ -153,6 +161,7 @@ double calc_resid(int n, int diag_size, int mid_size, int short_size,
 	int i;
 	double sum = 0, r;
 	
+#pragma omp parallel for private(r) reduction(+:sum)
 	for (i = 0; i < diag_size; i++) {
 		// calculate Ax - b for each row
 		r = ((i < short_size ? u_upper[i] * x[i + n] : 0) +
@@ -160,7 +169,7 @@ double calc_resid(int n, int diag_size, int mid_size, int short_size,
 				   (i > 0 ? l_upper[i - 1] * x[i - 1] : 0) +
 				   (i >= n ? l_lower[i - n] * x[i - n] : 0) +
 				   (x[i] * diag[i])) - b[i];
-		sum += r * r;
+		sum = sum + r * r;
 	}
 	
 	return sqrt(sum);
