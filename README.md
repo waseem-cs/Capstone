@@ -1,4 +1,4 @@
 Capstone
 =========
 
-Forked from https://github.com/waseempace/Capstone.git on Aug. 1 2014
+Forked from https://github.com/rlrossiter/Capstone.git on Aug. 1 2014
